@@ -157,6 +157,12 @@ void rebx_register_default_params(struct rebx_extras* rebx){
     rebx_register_param(rebx, "td_last_apoapsis", REBX_TYPE_DOUBLE);
     rebx_register_param(rebx, "td_drag_coef", REBX_TYPE_DOUBLE);
     rebx_register_param(rebx, "td_disruption_flag", REBX_TYPE_INT);
+
+    rebx_register_param(rebx, "gas_df_xcen", REBX_TYPE_DOUBLE);
+    rebx_register_param(rebx, "gas_df_ycen", REBX_TYPE_DOUBLE);
+    rebx_register_param(rebx, "gas_df_zcen", REBX_TYPE_DOUBLE);
+    rebx_register_param(rebx, "gas_df_switch", REBX_TYPE_DOUBLE);
+    rebx_register_param(rebx, "gas_grav_switch", REBX_TYPE_DOUBLE);
 }
 
 void rebx_register_param(struct rebx_extras* const rebx, const char* name, enum rebx_param_type type){
@@ -366,6 +372,10 @@ struct rebx_force* rebx_load_force(struct rebx_extras* const rebx, const char* n
         force->update_accelerations = rebx_tides_dynamical;
         force->force_type = REBX_FORCE_VEL;
     }
+    else if (strcmp(name, "gas_df_star") == 0){
+        force->update_accelerations = rebx_gas_df_star;
+        force->force_type = REBX_FORCE_VEL;
+    }
     else{
         char str[300];
         sprintf(str, "REBOUNDx error: Force '%s' not found in REBOUNDx library.\n", name);
@@ -373,7 +383,6 @@ struct rebx_force* rebx_load_force(struct rebx_extras* const rebx, const char* n
         rebx_remove_force(rebx, force); // Not free_force. Must remove from allocated_forces
         return NULL;
     }
-
     return force;
 }
 
