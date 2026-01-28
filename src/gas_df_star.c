@@ -65,15 +65,28 @@
 #include "reboundx.h"
 
 #include <stdio.h>
-
+// a=33.880249, b=0.500443, c=-3.241137, d=28.831748
 static double mass_inclosed(const double r){
     //Mass enclosed within radius r in Rsun
     //Using MESA fit for 1Msun RG model
-    const double a=32.85;
-    const double b=0.52;
-    const double c=-3.31;
-    const double d=29.79;
-    const double mass_loc = (r>9.9)?62.44932716040428:(a * tanh(b * (r + c)) + d); // in Msun
+    const double a=33.880249;
+    const double b=0.500443;
+    const double c=-3.241137;
+    const double d=28.831748;
+    double mass_loc;
+    if (r>9.9942){
+        mass_loc = 62.44932716040428; // in Msun
+    }
+    else if (r<1){
+        mass_loc = 1.4527355540496352 * (r)*(r)*(r); // in Msun
+    }
+    else{
+        mass_loc = a * tanh(b * (r + c)) + d; // in Msun
+    }
+    // if mass_loc<0, set mass_loc=0
+    // if (mass_loc<0){
+    //     return 0.0;
+    // }
     return mass_loc;
 }
 
@@ -103,7 +116,7 @@ static double calculate_pre_factor(const double mach, const double vel, const do
 }
 
 
-static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct reb_particle* const particles, const int N, const double xmin, const double xcenter, const double ycenter, const double zcenter, const double df_switch, const double grav_switch){ 
+static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct reb_particle* const particles, const int N, const double xmin, const double xcenter, const double ycenter, const double zcenter, const double df_ostriker, const double df_bondi, const double grav_switch){ 
     const int _N_real = sim->N - sim->N_var;
     // 1. 计算当前双星系统的质心 (COM)
     // 使用 REBOUND 内置函数获取整个系统的质心位置和速度
@@ -112,8 +125,8 @@ static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct 
     for (int i=0;i<_N_real;i++){
         const struct reb_particle p = particles[i];
         // 假设气体球心始终跟随双星质心
-        const double r_rel[3] = {p.x - com.x - xcenter, p.y - com.y - ycenter, p.z - com.z - zcenter};
-        const double v_rel[3] = {p.vx - com.vx, p.vy - com.vy, p.vz - com.vz};
+        const double r_rel[3] = {p.x - xcenter, p.y - ycenter, p.z - zcenter};
+        const double v_rel[3] = {p.vx, p.vy, p.vz};
         // const double r_rel[3] = {p.x, p.y, p.z};
         // const double v_rel[3] = {p.vx, p.vy, p.vz};
         // 3. 计算相对速度的大小
@@ -148,7 +161,7 @@ static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct 
             5.05114296e-02, 
             2.31333938e+00
         };
-        double rho_loc = (r_in_rsun<(9.9))?(((((
+        double rho_loc = (r_in_rsun<(9.9942))?(((((
         rho_coeff[0] * r_in_rsun + 
         rho_coeff[1]) * r_in_rsun + 
         rho_coeff[2]) * r_in_rsun + 
@@ -156,6 +169,9 @@ static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct 
         rho_coeff[4]) * r_in_rsun + 
         rho_coeff[5]):0; // in g/cm3
         rho_loc *= 1683721.7643842339; // in Msun/au**3
+        if (rho_loc<0){
+            rho_loc=0;
+        }
 
         const double mach=v_mag/cs_loc;
         const double t=sim->t;
@@ -164,9 +180,10 @@ static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct 
 
         
         const double mp = p.m;
-        const double v_soft = 1e-3; // 或根據系統自定義
-        const double r_soft = 1e-3; // 或根據系統自定義
-        const double fc=4.*M_PI*(sim->G*sim->G)*mp*(rho_loc)/(v_mag*v_mag*v_mag + v_soft)*integ;
+        const double v_soft = 0; // 或根據系統自定義
+        const double r_soft = 0; // 或根據系統自定義
+        const double fo=4.*M_PI*(sim->G*sim->G)*mp*(rho_loc)/(v_mag*v_mag*v_mag + v_soft)*integ;
+        const double fb=4.*M_PI*(sim->G*sim->G)*mp*(rho_loc) * v_mag/((v_mag*v_mag+cs_loc*cs_loc)*(v_mag*v_mag+cs_loc*cs_loc));
         const double fg= - sim->G * mass_inclosed(r_in_rsun) / (r_mag*r_mag*r_mag + r_soft);
 
         // particles[i].ax = particles[i].ax + fg*r_rel[0] - fc*v_rel[0];
@@ -176,9 +193,13 @@ static void rebx_calculate_gas_df_star(struct reb_simulation* const sim, struct 
         particles[i].ay += fg*r_rel[1]*grav_switch;
         particles[i].az += fg*r_rel[2]*grav_switch;
 
-        particles[i].ax -= fc*v_rel[0]*df_switch;
-        particles[i].ay -= fc*v_rel[1]*df_switch;
-        particles[i].az -= fc*v_rel[2]*df_switch;
+        particles[i].ax -= fo*v_rel[0]*df_ostriker;
+        particles[i].ay -= fo*v_rel[1]*df_ostriker;
+        particles[i].az -= fo*v_rel[2]*df_ostriker;
+
+        particles[i].ax -= fb*v_rel[0]*df_bondi;
+        particles[i].ay -= fb*v_rel[1]*df_bondi;
+        particles[i].az -= fb*v_rel[2]*df_bondi;
     }
 }
 
@@ -201,15 +222,19 @@ void rebx_gas_df_star(struct reb_simulation* const sim, struct rebx_force* const
     if (xmin == NULL){
         reb_simulation_error(sim, "Need to set a cutoff.\n");
     }
-    double* df_switch= rebx_get_param(rebx, force->ap, "gas_df_switch");
-    if (df_switch == NULL){
+    double* df_ostriker= rebx_get_param(rebx, force->ap, "gas_df_ostriker");
+    if (df_ostriker == NULL){
+        reb_simulation_error(sim, "Need to decide whether include the DF.\n");
+    }
+    double* df_bondi= rebx_get_param(rebx, force->ap, "gas_df_bondi");
+    if (df_bondi == NULL){
         reb_simulation_error(sim, "Need to decide whether include the DF.\n");
     }
     double* grav_switch= rebx_get_param(rebx, force->ap, "gas_grav_switch");
     if (grav_switch == NULL){
         reb_simulation_error(sim, "Need to decide whether include the DF.\n");
     }
-    rebx_calculate_gas_df_star(sim, particles, N, *xmin, *xcenter, *ycenter, *zcenter, *df_switch, *grav_switch);
+    rebx_calculate_gas_df_star(sim, particles, N, *xmin, *xcenter, *ycenter, *zcenter, *df_ostriker, *df_bondi, *grav_switch);
 
 }
 
